@@ -1,15 +1,15 @@
 CC = cc
 AR = ar
 CFLAGS = -std=c11 -O2 -Wall -Wextra -Wpedantic
-CPPFLAGS = -Iinclude
+CPPFLAGS = -Iinclude -Ithird_party/cJSON
 PYTHON = python3
 COURSES = data/courses.tsv
 FACULTY = data/faculty.tsv
-LIBOBJ = build/input.o build/scheduler.o build/output.o
+LIBOBJ = build/input.o build/scheduler.o build/output.o build/json.o build/cJSON.o
 
 .PHONY: all run test clean import
 .DELETE_ON_ERROR:
-all: output/schedules.md
+all: run
 
 build lib output:
 	mkdir -p $@
@@ -17,18 +17,24 @@ build lib output:
 build/%.o: src/%.c include/schedule.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
-lib/libschedule.a: $(LIBOBJ) | lib
-	$(AR) rcs $@ $(LIBOBJ)
+build/cJSON.o: third_party/cJSON/cJSON.c third_party/cJSON/cJSON.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
+
+build/json.o: third_party/cJSON/cJSON.h
+
+lib/libschedule.a: $(LIBOBJ) Makefile | lib
+	$(AR) rcs $@.tmp $(LIBOBJ)
+	mv $@.tmp $@
 
 build/scheduler: build/main.o lib/libschedule.a
 	$(CC) $(CFLAGS) build/main.o lib/libschedule.a -o $@
 
-output/schedules.md: build/scheduler $(COURSES) $(FACULTY) | output
-	./build/scheduler $(COURSES) $(FACULTY) > $@.tmp
+output/schedules.md: build/scheduler $(COURSES) $(FACULTY) scripts/create_database.py | output
+	$(PYTHON) scripts/create_database.py $(COURSES) $(FACULTY) > $@.tmp
 	mv $@.tmp $@
 
 run: build/scheduler | output
-	./build/scheduler $(COURSES) $(FACULTY) > output/schedules.md.tmp
+	$(PYTHON) scripts/create_database.py $(COURSES) $(FACULTY) > output/schedules.md.tmp
 	mv output/schedules.md.tmp output/schedules.md
 
 import:

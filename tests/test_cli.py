@@ -1,5 +1,8 @@
 """Exercise the actual executable using temporary inputs."""
 from pathlib import Path
+from contextlib import closing
+import os
+import sqlite3
 import subprocess
 import tempfile
 import unittest
@@ -16,7 +19,8 @@ class CommandTests(unittest.TestCase):
             a, b = Path(directory) / 'courses.tsv', Path(directory) / 'faculty.tsv'
             a.write_text(courses)
             b.write_text(faculty)
-            return subprocess.run([BIN, a, b], capture_output=True, text=True)
+            return subprocess.run([BIN, a, b], capture_output=True, text=True,
+                                  env={**os.environ, "SCHEDULE_DB": str(Path(directory) / "schedule.db")})
 
     def test_output(self):
         result = self.run_files()
@@ -26,6 +30,39 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(result.stdout.count('REVIEW:'), 3)
         self.assertIn('Teaching conflict: CTEC 435.180 / CTEC 402.180', result.stdout)
         self.assertEqual(result.stdout, self.run_files().stdout)
+
+    def test_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'schedule.db'
+            env = {**os.environ, 'SCHEDULE_DB': str(path)}
+            def run():
+                return subprocess.run(['python3', ROOT / 'scripts/create_database.py', ROOT / 'data/courses.tsv', ROOT / 'data/faculty.tsv'],
+                                      env=env, capture_output=True, text=True)
+            self.assertEqual(run().returncode, 0)
+            with closing(sqlite3.connect(path)) as db:
+                self.assertEqual(db.execute('SELECT COUNT(*) FROM Faculty').fetchone()[0], 25)
+                self.assertEqual(db.execute('SELECT COUNT(*) FROM Courses').fetchone()[0], 56)
+                self.assertEqual(db.execute('SELECT COUNT(*) FROM OfficeHours').fetchone()[0], 94)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM OfficeHourPlans WHERE status='withheld'").fetchone()[0], 3)
+                self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(), [])
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM ClassMeetings WHERE status='async' AND start_minute IS NOT NULL").fetchone()[0], 0)
+                self.assertEqual(db.execute("""SELECT COUNT(*) FROM OfficeHours h
+                    JOIN Courses c ON c.faculty_name=h.faculty_name
+                    JOIN ClassMeetings m ON m.course_code=c.code AND m.session=h.session
+                    WHERE m.status='scheduled' AND (m.days_mask & (1 << h.day)) != 0
+                    AND h.start_minute<m.end_minute AND m.start_minute<h.end_minute""").fetchone()[0], 0)
+                before = db.execute('SELECT * FROM OfficeHours ORDER BY 1,2,3,4').fetchall()
+            self.assertEqual(run().returncode, 0)
+            with closing(sqlite3.connect(path)) as db:
+                self.assertEqual(db.execute('SELECT * FROM OfficeHours ORDER BY 1,2,3,4').fetchall(), before)
+                db.execute("CREATE TRIGGER reject_import BEFORE INSERT ON Faculty BEGIN SELECT RAISE(ABORT, 'test failure'); END")
+                db.commit()
+            result = run()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, '')
+            with closing(sqlite3.connect(path)) as db:
+                self.assertEqual(db.execute('SELECT * FROM OfficeHours ORDER BY 1,2,3,4').fetchall(), before)
+                self.assertEqual(db.execute('SELECT COUNT(*) FROM Faculty').fetchone()[0], 25)
 
     def test_exactly_two_inputs(self):
         for args in [[], ['x'], ['x', 'y', 'z']]:

@@ -25,6 +25,7 @@ typedef struct {
     int nc, nf;
 } Schedule;
 
+int write_json(FILE *out, const Schedule *s);
 int load_inputs(Schedule *s, const char *courses, const char *faculty);
 int days_mask(const char *text);
 int parse_time(const char *text);
