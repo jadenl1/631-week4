@@ -1,111 +1,89 @@
-# Faculty Schedule Generator
+# Faculty Schedules & Syllabus Office Hours
 
-COSC 631 · C program · 56 courses · 25 faculty
+Python parses course data and syllabi, writes reports, and saves SQLite data. C only launches Python; Make compiles and runs the launcher. Office hours are **extracted from syllabi, never scheduled automatically**.
 
-## Compile and run
+## Build → run → view
 
-Requires: GCC/Clang, Make, `ar`, and Python 3 (with its built-in `sqlite3` module).
+Requires a C compiler, Make, and Python 3.10+.
 
-Run these steps from the project root:
+```sh
+make build/scheduler
+python3 -m pip install -r requirements.txt
+make run
+```
 
-1. **Compile** the program and static library:
+View [output/schedules.md](output/schedules.md). Without syllabi, it lists professors, courses, class times, and locations, with office hours marked unavailable.
 
-   ```sh
-   make build/scheduler
-   ```
+## Supply a syllabus
 
-2. **Run** using `data/courses.tsv` and `data/faculty.tsv`:
+Add your OpenAI API key to `.env` in the project root:
 
-   ```sh
-   make run
-   ```
+```dotenv
+OPENAI_API_KEY=your-api-key
+OPENAI_MODEL=gpt-4.1-mini
+```
 
-3. **View** [output/schedules.md](output/schedules.md). Imported data and generated office hours are also saved to `schedule.db`.
+Python loads this file automatically. `.env` is ignored by Git; existing terminal environment variables take precedence. Then supply a file:
 
-Shortcut: `make` compiles and generates the schedules and database in one command.
+```sh
+make run ARGS='--syllabus "path/to/syllabus.docx"'
+```
+
+- Supports `.txt`, `.md`, `.docx`, and text-based `.pdf` files.
+- For PDF support: `python3 -m pip install -r requirements.txt` (use a virtual environment if required).
+- Scanned PDFs need OCR first. No local models are required.
+- Syllabus text is sent to the OpenAI Responses API. Defaults to `gpt-4.1-mini`; override with `--model` or `OPENAI_MODEL`.
+- Missing/ambiguous fields remain unknown. Quotes are checked against the source; all extracted hours require review.
+- Each syllabus remains separate, preserving appointment instructions and conflicting versions. Faculty matches require equivalent full names; new professors get their own section.
+
+Multiple files or a folder:
+
+```sh
+./build/scheduler --syllabus "first.pdf" --syllabus "second.docx"
+./build/scheduler --syllabi-dir "path/to/syllabi"
+```
+
+Folder input reads supported files directly inside that folder. Extractions are kept in `schedule.db`; supplying the same syllabus path updates its stored extraction. Running without syllabi rebuilds the report from stored results.
+
+## Outputs
+
+| File | Contents |
+| --- | --- |
+| `output/schedules.md` | Faculty/course tables and syllabus excerpts |
+| `schedule.db` | Faculty, Courses, ClassMeetings, Syllabi, OfficeHours |
+
+Python creates both outputs. Extraction details are stored in SQLite; the report displays office hours under each professor. Database updates are transactional. The old generated office-hour plans and sample availability tables are removed on the first run; unrelated tables are preserved. SQLite stores source excerpts, not computed time slots.
 
 ## Optional commands
 
 ```sh
-make test      # Run tests
-make clean     # Remove generated files
+make test       # Offline tests with mocked OpenAI responses
+make clean      # Remove build/report files; preserve inputs and database
+make import     # Recreate both TSV files from the original XLSX (overwrites edits)
+./build/scheduler --help
 ```
 
-Custom inputs (exactly two files):
+Custom inputs/output paths:
 
 ```sh
-./build/scheduler courses.tsv faculty.tsv > schedules.md
+./build/scheduler courses.tsv faculty.tsv --syllabus syllabus.txt \
+  --output report.md --database schedule.db
 ```
 
 ## Files
 
 ```text
-├── 📁 data/
-│   ├── 📊 courses.tsv          # Classes, instructors, times, rooms
-│   └── 📊 faculty.tsv          # Availability and office-hour requirements
-├── 🔖 include/schedule.h       # Shared interface
-├── 📁 src/                     # Main, input, scheduling, output modules
-├── 📦 lib/libschedule.a        # Generated static library
-├── 🐍 scripts/import_schedule.py
+├── 📁 data/                    # Faculty and course TSV inputs
+├── 📁 scripts/
+│   ├── 🐍 inputs.py            # Faculty/course validation
+│   ├── 🐍 syllabus.py          # Document reading + OpenAI extraction
+│   ├── 🐍 pipeline.py          # Report and database creation
+│   ├── 🐍 import_schedule.py   # XLSX → TSV
+│   └── 🐍 create_database.py   # Compatibility entry point to pipeline
+├── 📄 src/main.c               # Python launcher only
 ├── 📁 tests/
-├── 📝 output/schedules.md
+├── 📁 output/
 └── ⚙️ Makefile
 ```
 
-## Notes
-
-- **Inputs:** local TSV files; no Internet needed. Days: `MTWRF` (`R` = Thursday). Times: 24-hour `HH:MM`.
-- **Scheduling:** separate 7R1/7R2 sessions; earliest available blocks; no class overlaps.
-- **Sample availability:** weekdays, 9 AM–5 PM; two 60-minute blocks weekly; offices `TBD`. Edit `faculty.tsv` as needed.
-- **Source issues:** invalid times and teaching conflicts are flagged; affected office hours are withheld. Instructor name aliases are listed in the import script.
-- **Reimport:** `make import` recreates both inputs from the XLSX, **overwriting input edits**.
-- **Library:** `ar rcs` archives compiled modules; the linker includes required code in the executable.
-- **Makefile:** tracks dependencies, rebuilds changed modules, and generates output.
-
-References: [Static libraries](https://www.gnu.org/software/libtool/manual/html_node/Static-libraries.html) · [GNU Make](https://www.gnu.org/software/make/manual/make.html)
-
-## SQLite database
-
-The C program reads the two TSV files and calculates office hours.
-`scripts/create_database.py` runs it with `SCHEDULE_FORMAT=json`, reads the structured
-results, and creates/populates `schedule.db` using Python’s built-in `sqlite3` module.
-The script also runs the C Markdown output mode and prints the report; the Makefile
-saves it to `output/schedules.md`. C contains no SQL or SQLite dependency.
-The scheduler uses in-memory structs; it does not reload data from SQL.
-
-`make run` runs this complete workflow. Running `./build/scheduler` directly only
-prints schedules. For custom inputs with database storage:
-
-```sh
-python3 scripts/create_database.py courses.tsv faculty.tsv > schedules.md
-```
-
-| Table | Stores |
-| --- | --- |
-| Faculty | Names, departments, offices |
-| Availability | Available days/times and weekly requirements |
-| Courses | Course codes, titles, faculty references |
-| ClassMeetings | Session, days, times, room, source status |
-| OfficeHourPlans | Required/assigned minutes and complete, withheld, or insufficient status |
-| OfficeHours | Generated blocks linked to each professor/session plan |
-
-Every successful run replaces these tables' data in one transaction. Failed database
-writes roll back to the previous data. TSV files remain the source of truth; edits
-made directly to these SQL tables are replaced on the next run. Other tables are left alone.
-`make clean` preserves the database. Set `SCHEDULE_DB` to use another database path.
-
-With the SQLite command-line tool installed:
-
-```sh
-sqlite3 -header -column schedule.db "SELECT * FROM Faculty;"
-sqlite3 -header -column schedule.db "SELECT * FROM OfficeHourPlans;"
-sqlite3 -header -column schedule.db "SELECT faculty_name, session, day, printf('%02d:%02d', start_minute/60, start_minute%60) AS start_time, printf('%02d:%02d', end_minute/60, end_minute%60) AS end_time FROM OfficeHours;"
-```
-
-Sessions are 1 (7R1) and 2 (7R2). Office-hour days are 0 (Monday) through 4 (Friday).
-Times are minutes after midnight. Day masks use Monday=1, Tuesday=2, Wednesday=4,
-Thursday=8, Friday=16, added together. Asynchronous class days/times are SQL NULL.
-
-JSON export uses vendored [cJSON v1.7.19](https://github.com/DaveGamble/cJSON/tree/v1.7.19)
-in `third_party/cJSON/` (MIT license included). Make compiles it into the static
-library automatically; no additional installation or network access is needed.
+API reference: [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses).

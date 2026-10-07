@@ -1,0 +1,4 @@
+# Trusted HTTPS certificates for the OpenAI connection.
+certifi>=2024.8.30
+# Text extraction from PDF syllabi.
+pypdf>=5,<7

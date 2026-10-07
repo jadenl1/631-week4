@@ -8,3 +8,8 @@ output/*.tmp
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Local configuration and environments
+.env
+.env.*
+.venv/

@@ -59,11 +59,10 @@ def main():
         writer.writerows(courses)
     with (args.output / 'faculty.tsv').open('w', newline='') as out:
         writer = csv.writer(out, delimiter='\t', lineterminator='\n')
-        writer.writerow(['lecturer', 'department', 'office', 'days', 'available_start',
-                         'available_end', 'weekly_minutes', 'block_minutes', 'courses'])
+        writer.writerow(['lecturer', 'department', 'office', 'courses'])
         for name, codes in sorted(faculty.items()):
-            writer.writerow([name, 'CTEC', 'TBD', 'MTWRF', '09:00', '17:00', '120', '60', ';'.join(codes)])
-    print(f'Imported {len(courses)} courses and {len(faculty)} faculty. Faculty availability is sample data.')
+            writer.writerow([name, 'CTEC', 'TBD', ';'.join(codes)])
+    print(f'Imported {len(courses)} courses and {len(faculty)} faculty. Office hours require syllabi.')
 
 
 if __name__ == '__main__':
